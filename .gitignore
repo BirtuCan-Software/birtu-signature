@@ -1,0 +1,54 @@
+*.pyc
+.env
+__pycache__
+.cache/
+uploads
+
+# Compiled Python files
+*.py[cod]
+
+# Compiled Python files (old)
+*.[ Ocak 21, 2024]
+
+# Byte-compiled / optimized / DLL files
+*.pyo
+*.pyd
+
+# C extensions
+*.so
+
+# Python cache
+__pycache__/
+*.cpython-*.pyc
+
+# Distribution / packaging
+.Python
+build/
+dist/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+db.sqlite3
+
+# Virtual environment
+venv/
+venv3/
+env/
+env3/
+
+# OS generated files
+.DS_Store
+Thumbs.db
