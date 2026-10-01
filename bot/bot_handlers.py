@@ -1,3 +1,4 @@
+import html
 import logging
 import re
 from google import genai
@@ -30,25 +31,65 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Send me a message or media, and I'll append your signature.\n\n"
         "Commands:\n"
         "/add_sig [Name] | [Your Signature Content]\n"
+        "/del_sig [Name] - Delete a signature\n"
         "/list_sigs - View signatures\n"
         "/set_default [Name] - Auto-apply a signature\n"
         "/set_gemini [API_KEY] - Set your AI key for auto-generations"
     )
 
 async def add_sig_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text.replace('/add_sig', '').strip()
+    # Use text_html so entities (custom emojis, links, bold, italics) are converted to HTML tags
+    full_html = update.message.text_html
+    
+    # Strip the command prefix (/add_sig or /add_sig@YourBot)
+    text = re.sub(r'^/add_sig(?:@\w+)?\s*', '', full_html, flags=re.IGNORECASE).strip()
+    
     if '|' not in text:
         await update.message.reply_text("⚠️ Format error. Use:\n/add_sig MySig | This is my signature text!")
         return
+        
     name, content = text.split('|', 1)
+    name = name.strip()
+    content = content.strip()
+    
     user = await get_or_create_user(update.effective_user)
     
-    if await Signature.objects.filter(user=user, name=name.strip()).aexists():
+    if await Signature.objects.filter(user=user, name=name).aexists():
         await update.message.reply_text("A signature with this name already exists.")
         return
         
-    await Signature.objects.acreate(user=user, name=name.strip(), content=content.strip())
-    await update.message.reply_text(f"✅ Signature '{name.strip()}' saved!")
+    await Signature.objects.acreate(user=user, name=name, content=content)
+    await update.message.reply_text(f"✅ Signature '{name}' saved with rich formatting!")
+
+async def delete_sig_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Strip the command prefix (/del_sig, /delete_sig, or with @YourBot)
+    name = re.sub(r'^/(?:del_sig|delete_sig)(?:@\w+)?\s*', '', update.message.text, flags=re.IGNORECASE).strip()
+    user = await get_or_create_user(update.effective_user)
+    
+    if not name:
+        sigs = [sig.name async for sig in Signature.objects.filter(user=user)]
+        if sigs:
+            names_list = "\n".join([f"• <code>{html.escape(s)}</code>" for s in sigs])
+            await update.message.reply_text(
+                f"⚠️ Please specify which signature to delete.\nUse format: /del_sig [Name]\n\nYour signatures:\n{names_list}",
+                parse_mode='HTML'
+            )
+        else:
+            await update.message.reply_text("You have no signatures to delete.")
+        return
+
+    try:
+        sig = await Signature.objects.aget(user=user, name__iexact=name)
+        sig_name = sig.name
+        if user.default_signature_id == sig.id:
+            user.default_signature = None
+            await user.asave()
+        await sig.adelete()
+        await update.message.reply_text(f"🗑️ Signature '{sig_name}' deleted successfully.")
+    except Signature.DoesNotExist:
+        await update.message.reply_text(f"❌ Signature '{name}' not found.")
+
+del_sig_command = delete_sig_command
 
 async def list_sigs_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = await get_or_create_user(update.effective_user)
@@ -57,10 +98,13 @@ async def list_sigs_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("You have no signatures. Use /add_sig to create one.")
         return
     
-    msg = "📝 **Your Signatures:**\n\n"
+    msg = "📝 <b>Your Signatures:</b>\n\n"
     for sig in sigs:
-        msg += f"🔹 **{sig.name}**\n{sig.content}\n\n"
-    await update.message.reply_text(msg, parse_mode='Markdown')
+        msg += f"🔹 <b>{html.escape(sig.name)}</b>\n{sig.content}\n\n"
+    try:
+        await update.message.reply_text(msg, parse_mode='HTML')
+    except Exception:
+        await update.message.reply_text(msg)
 
 async def set_gemini_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     key = update.message.text.replace('/set_gemini', '').strip()
@@ -117,10 +161,14 @@ async def handle_incoming_message(update: Update, context: ContextTypes.DEFAULT_
         or update.message.audio or update.message.voice or update.message.animation
     )
     content_text = update.message.text or update.message.caption or ("Media/File" if is_media else "")
+    content_html = update.message.text_html or update.message.caption_html or ("Media/File" if is_media else "")
+
     cache.set(f"msg_text_{update.message.message_id}", content_text, timeout=3600)
+    cache.set(f"msg_html_{update.message.message_id}", content_html, timeout=3600)
     cache.set(f"msg_is_media_{update.message.message_id}", is_media, timeout=3600)
     if is_media and update.message.caption:
         cache.set(f"msg_caption_{update.message.message_id}", update.message.caption, timeout=3600)
+        cache.set(f"msg_caption_html_{update.message.message_id}", update.message.caption_html, timeout=3600)
 
     if user.default_signature_id:
         sig = await Signature.objects.aget(id=user.default_signature_id)
@@ -207,15 +255,21 @@ async def process_ai_generation(update: Update, context: ContextTypes.DEFAULT_TY
 
         if is_media:
             orig_caption = cache.get(f"msg_caption_{orig_msg_id}") or (orig_text if orig_text != "Media/File" else "")
+            orig_caption_html = cache.get(f"msg_caption_html_{orig_msg_id}") or orig_caption
             dummy_msg = type('obj', (object,), {
                 'text': None,
+                'text_html': None,
                 'caption': orig_caption,
+                'caption_html': orig_caption_html,
                 'message_id': orig_msg_id,
             })()
         else:
+            orig_html = cache.get(f"msg_html_{orig_msg_id}") or orig_text
             dummy_msg = type('obj', (object,), {
                 'text': orig_text,
+                'text_html': orig_html,
                 'caption': None,
+                'caption_html': None,
                 'message_id': orig_msg_id,
             })()
 
@@ -228,17 +282,41 @@ async def process_ai_generation(update: Update, context: ContextTypes.DEFAULT_TY
 async def copy_and_append_signature(update: Update, context, original_msg, signature_content, explicit_msg_id=None):
     chat_id = update.effective_chat.id
     msg_id = explicit_msg_id or getattr(original_msg, 'message_id', None)
-    
-    if getattr(original_msg, 'text', None) and not getattr(original_msg, 'caption', None) and original_msg.text != "Media/File":
-        new_text = f"{original_msg.text}\n\n{signature_content}"
+
+    # Check whether the message is media or pure text
+    is_media = (
+        getattr(original_msg, 'caption', None) is not None
+        or (original_msg and not getattr(original_msg, 'text', None))
+        or cache.get(f"msg_is_media_{msg_id}") is True
+    )
+
+    if not is_media:
+        # Prefer text_html to preserve custom emojis (<tg-emoji>), bold, links, etc.
+        orig_text = (
+            getattr(original_msg, 'text_html', None)
+            or (cache.get(f"msg_html_{msg_id}") if msg_id else None)
+            or getattr(original_msg, 'text', '')
+            or ''
+        )
+        if orig_text == "Media/File":
+            orig_text = ''
+
+        new_text = f"{orig_text}\n\n{signature_content}".strip() if orig_text else signature_content
         try:
             await context.bot.send_message(chat_id=chat_id, text=new_text, parse_mode='HTML', disable_web_page_preview=True)
         except Exception:
             await context.bot.send_message(chat_id=chat_id, text=new_text, disable_web_page_preview=True)
     else:
-        orig_caption = getattr(original_msg, 'caption', '') or ''
+        # Prefer caption_html to preserve custom emojis in photo/video captions
+        orig_caption = (
+            getattr(original_msg, 'caption_html', None)
+            or (cache.get(f"msg_caption_html_{msg_id}") if msg_id else None)
+            or getattr(original_msg, 'caption', '')
+            or ''
+        )
         if orig_caption == "Media/File":
             orig_caption = ''
+
         new_caption = f"{orig_caption}\n\n{signature_content}".strip() if orig_caption else signature_content
         if len(new_caption) > 1024:
             await context.bot.copy_message(chat_id=chat_id, from_chat_id=chat_id, message_id=msg_id)

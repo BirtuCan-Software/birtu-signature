@@ -176,6 +176,7 @@ Users interact with the bot using standard commands:
 
 - `/start` - Initialize bot conversation and view instructions
 - `/add_sig [Name] | [Signature Content]` - Save a new signature template
+- `/del_sig [Name]` - Delete an existing signature (alias: `/delete_sig`)
 - `/list_sigs` - Display all saved signatures
 - `/set_default [Name]` - Assign a default signature (use `none` to disable)
 - `/set_gemini [API_KEY]` - Save a personal Google Gemini API key for AI features

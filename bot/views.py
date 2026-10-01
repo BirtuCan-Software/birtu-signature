@@ -12,7 +12,7 @@ from telegram.ext import (
 )
 
 from .bot_handlers import (
-    start_command, add_sig_command, list_sigs_command, set_gemini_command, set_default_command,
+    start_command, add_sig_command, del_sig_command, delete_sig_command, list_sigs_command, set_gemini_command, set_default_command,
     handle_incoming_message, handle_callback_query, inline_query_handler
 )
 
@@ -48,6 +48,8 @@ bot_app = Application.builder().token(settings.TELEGRAM_BOT_TOKEN).build()
 
 bot_app.add_handler(CommandHandler("start", start_command))
 bot_app.add_handler(CommandHandler("add_sig", add_sig_command))
+bot_app.add_handler(CommandHandler("del_sig", delete_sig_command))
+bot_app.add_handler(CommandHandler("delete_sig", delete_sig_command))
 bot_app.add_handler(CommandHandler("list_sigs", list_sigs_command))
 bot_app.add_handler(CommandHandler("set_gemini", set_gemini_command))
 bot_app.add_handler(CommandHandler("set_default", set_default_command))
